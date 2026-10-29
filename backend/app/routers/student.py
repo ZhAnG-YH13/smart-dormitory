@@ -270,6 +270,7 @@ async def import_students(
     header = [str(c).strip() if c else "" for c in rows[0]]
     success = 0
     fail = 0
+    accounts_created = 0
     errors = []
 
     for idx, row in enumerate(rows[1:], start=2):
@@ -329,6 +330,25 @@ async def import_students(
             db.add(s)
             db.flush()
             s.info_complete = _calc_info_complete(s)
+
+            # 导入即自动建号: 用户名=学号, 初始密码=默认密码
+            exist_user = db.query(SysUser).filter(SysUser.username == student_no).first()
+            if exist_user:
+                s.user_id = exist_user.id
+            else:
+                u = SysUser(
+                    username=student_no,
+                    password_hash=hash_password(config.DEFAULT_PASSWORD),
+                    real_name=name,
+                    role="student",
+                    phone=s.phone,
+                    status=1,
+                    must_change_password=False,
+                )
+                db.add(u)
+                db.flush()
+                s.user_id = u.id
+                accounts_created += 1
             success += 1
         except Exception as e:
             fail += 1
@@ -341,7 +361,8 @@ async def import_students(
     db.add(log)
     db.commit()
 
-    return {"success_count": success, "fail_count": fail, "errors": errors[:20]}
+    return {"success_count": success, "fail_count": fail,
+            "accounts_created": accounts_created, "errors": errors[:20]}
 
 
 @router.post("/create-accounts")

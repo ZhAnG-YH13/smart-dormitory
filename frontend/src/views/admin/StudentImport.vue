@@ -26,9 +26,10 @@
         />
       </el-table>
       <ul class="tip-list">
-        <li>文件格式为 <b>.xlsx</b>，第一行为表头，必须与上表列名一致，从第二行开始填写学生数据。</li>
+        <li>文件格式为 <b>.xlsx</b> 或 <b>.csv</b>，第一行为表头，必须与上表列名一致，从第二行开始填写学生数据。</li>
         <li>「学号」「姓名」为必填项；「性别」填写“男”或“女”。</li>
         <li>学院 / 专业 / 年级 / 班级 填写名称，系统会自动匹配，不存在的层级将自动创建。</li>
+        <li>导入成功后系统会<b>自动为每名学生创建登录账号</b>（用户名=学号，初始密码 123456）。</li>
         <li>宿舍楼 / 宿舍房间 为选填信息，导入后可在学生编辑中补充。</li>
         <li>学号已存在的记录会被跳过并计入失败明细。</li>
       </ul>
@@ -43,15 +44,15 @@
         drag
         :auto-upload="false"
         :limit="1"
-        accept=".xlsx"
+        accept=".xlsx,.csv"
         :on-change="onFileChange"
         :on-remove="onRemove"
         :on-exceed="onExceed"
       >
         <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-        <div class="el-upload__text">将 Excel 文件拖到此处，或<em>点击选择文件</em></div>
+        <div class="el-upload__text">将 Excel / CSV 文件拖到此处，或<em>点击选择文件</em></div>
         <template #tip>
-          <div class="el-upload__tip">仅支持 .xlsx 格式，单次只能上传一个文件</div>
+          <div class="el-upload__tip">支持 .xlsx / .csv 格式，单次只能上传一个文件</div>
         </template>
       </el-upload>
 
@@ -149,6 +150,7 @@ const sampleRows = [
 
 const successCount = computed(() => Number(result.value?.success_count) || 0)
 const failCount = computed(() => Number(result.value?.fail_count) || 0)
+const accountsCreated = computed(() => Number(result.value?.accounts_created) || 0)
 const totalCount = computed(() => successCount.value + failCount.value)
 
 const errorRows = computed(() => {
@@ -192,7 +194,7 @@ async function doImport() {
     if (Number(result.value?.fail_count) > 0) {
       ElMessage.warning('导入完成，存在失败记录')
     } else {
-      ElMessage.success('导入完成，已导入学生，可前往学生列表批量创建账号')
+      ElMessage.success(`导入完成：新增 ${successCount.value} 名学生，自动创建 ${accountsCreated.value} 个账号（初始密码 123456）`)
     }
   } catch (e) {
     /* 错误提示已由拦截器处理 */
