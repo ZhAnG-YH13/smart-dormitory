@@ -1,0 +1,36 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+*.egg-info/
+
+# ---------- 数据库 ----------
+*.db
+*.sqlite
+*.sqlite3
+
+# ---------- 上传的图片/文件 ----------
+backend/uploads/
+
+# ---------- Node / 前端 ----------
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+
+# ---------- 环境变量 ----------
+.env
+.env.local
