@@ -16,6 +16,50 @@ sys.path.insert(0, str(config.BASE_DIR))
 router = APIRouter(prefix="/api/students", tags=["学生管理"])
 
 
+def _normalize_building_name(raw) -> str:
+    """把 7 / 7号楼 / 07号楼 统一成 7号楼"""
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = s.replace("栋", "号楼").replace("#", "")
+    if s.isdigit():
+        s = f"{int(s)}号楼"
+    return s
+
+
+def _resolve_room(db: Session, building_id, room_id=None, room_number=None):
+    """解析房间: 优先 room_id; 否则按三位房号查找, 不存在则自动创建"""
+    if room_id:
+        r = db.query(DormitoryRoom).filter(
+            DormitoryRoom.id == int(room_id), DormitoryRoom.is_deleted == False
+        ).first()
+        if not r:
+            raise HTTPException(status_code=400, detail="房间不存在")
+        return r.id, r.building_id
+    rn = str(room_number or "").strip()
+    if not rn:
+        return None, building_id
+    if not (rn.isdigit() and len(rn) == 3):
+        raise HTTPException(status_code=400, detail="房间号必须为三位数字(如 231)")
+    if not building_id:
+        raise HTTPException(status_code=400, detail="填写房间号前请先选择宿舍楼")
+    b = db.query(DormitoryBuilding).filter(
+        DormitoryBuilding.id == int(building_id), DormitoryBuilding.is_deleted == False
+    ).first()
+    if not b:
+        raise HTTPException(status_code=400, detail="宿舍楼不存在")
+    r = db.query(DormitoryRoom).filter(
+        DormitoryRoom.building_id == b.id,
+        DormitoryRoom.room_number == rn,
+        DormitoryRoom.is_deleted == False,
+    ).first()
+    if not r:
+        r = DormitoryRoom(building_id=b.id, room_number=rn, capacity=4)
+        db.add(r)
+        db.flush()
+    return r.id, b.id
+
+
 def _calc_info_complete(student: Student) -> int:
     """计算学生信息完整度 0-100"""
     total_fields = 10
@@ -147,6 +191,11 @@ def create_student(
     if exists:
         raise HTTPException(status_code=400, detail="学号已存在")
 
+    building_id = data.get("building_id") or None
+    room_id, building_id = _resolve_room(
+        db, building_id, data.get("room_id"), data.get("room_number")
+    )
+
     s = Student(
         student_no=data["student_no"],
         name=data["name"],
@@ -158,8 +207,8 @@ def create_student(
         major_id=data.get("major_id"),
         grade_id=data.get("grade_id"),
         class_id=data.get("class_id"),
-        building_id=data.get("building_id"),
-        room_id=data.get("room_id"),
+        building_id=building_id,
+        room_id=room_id,
         user_id=data.get("user_id"),
     )
     db.add(s)
@@ -196,6 +245,15 @@ def update_student(
     elif current_user.role == "counselor":
         if current_user.counselor_class_id != s.class_id:
             raise HTTPException(status_code=403, detail="权限不足")
+
+    # 宿舍信息: 支持直接传三位房号, 房间不存在时自动创建
+    if any(k in data for k in ("building_id", "room_id", "room_number")):
+        bid = data.get("building_id", s.building_id) or None
+        rid, bid = _resolve_room(db, bid, data.get("room_id"), data.get("room_number"))
+        s.building_id = bid
+        s.room_id = rid
+        for k in ("building_id", "room_id", "room_number"):
+            data.pop(k, None)
 
     for k, v in data.items():
         if hasattr(s, k) and k != "id":
@@ -326,6 +384,28 @@ async def import_students(
                                 ci = ClassInfo(name=class_name, grade_id=g.id)
                                 db.add(ci); db.flush()
                             s.class_id = ci.id
+
+            # 宿舍: 楼栋可写 7 / 7号楼, 房号必须三位, 房间不存在时自动创建
+            building_name = _normalize_building_name(
+                row_dict.get("宿舍楼", "") or row_dict.get("building", "") or row_dict.get("building_name", "")
+            )
+            room_no = str(
+                row_dict.get("宿舍房间", "") or row_dict.get("房间号", "")
+                or row_dict.get("room_number", "") or ""
+            ).strip()
+            if building_name:
+                b = db.query(DormitoryBuilding).filter(
+                    DormitoryBuilding.name == building_name, DormitoryBuilding.is_deleted == False
+                ).first()
+                if not b:
+                    b = DormitoryBuilding(name=building_name, code=f"B{building_name[:-3]}", floors=6)
+                    db.add(b); db.flush()
+                s.building_id = b.id
+                if room_no:
+                    try:
+                        s.room_id, _ = _resolve_room(db, b.id, None, room_no)
+                    except HTTPException:
+                        errors.append(f"第{idx}行: 房间号 {room_no} 必须为三位数字, 已忽略宿舍信息")
 
             db.add(s)
             db.flush()

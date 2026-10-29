@@ -159,7 +159,18 @@ const buildingEditId = ref(null)
 const buildingFormRef = ref(null)
 const buildingForm = reactive({ name: '', code: '', floors: 6 })
 const buildingRules = {
-  name: [{ required: true, message: '请输入宿舍楼名称', trigger: 'blur' }]
+  name: [
+    { required: true, message: '请输入宿舍楼名称', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        const v = String(value || '').trim()
+        if (!v) return callback()
+        if (!/^([1-9]|[1-9]\d|100)号楼$/.test(v)) callback(new Error('楼号需为 1~100号楼，如 7号楼'))
+        else callback()
+      },
+      trigger: 'blur'
+    }
+  ]
 }
 
 const roomDialogVisible = ref(false)
@@ -168,7 +179,10 @@ const roomFormRef = ref(null)
 const roomForm = reactive({ building_id: null, room_number: '', capacity: 4 })
 const roomRules = {
   building_id: [{ required: true, message: '请选择宿舍楼', trigger: 'change' }],
-  room_number: [{ required: true, message: '请输入房间号', trigger: 'blur' }]
+  room_number: [
+    { required: true, message: '请输入房间号', trigger: 'blur' },
+    { pattern: /^\d{3}$/, message: '房间号必须是三位数字，如 231', trigger: 'blur' }
+  ]
 }
 
 function pickItems(res) {

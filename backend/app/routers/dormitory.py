@@ -10,6 +10,8 @@ from .. import config
 import sys
 sys.path.insert(0, str(config.BASE_DIR))
 
+import re
+
 router = APIRouter(prefix="/api", tags=["宿舍管理"])
 
 
@@ -52,8 +54,19 @@ def list_buildings(
 @router.post("/buildings")
 def create_building(data: dict, db: Session = Depends(get_db),
                     current_user: SysUser = Depends(require_roles("admin"))):
-    if not data.get("name"): raise HTTPException(status_code=400, detail="名称必填")
-    b = DormitoryBuilding(name=data["name"], code=data.get("code"), floors=data.get("floors", 6))
+    name = str(data.get("name") or "").strip().replace("栋", "号楼").replace("#", "")
+    if name.isdigit():
+        name = f"{int(name)}号楼"
+    if not name:
+        raise HTTPException(status_code=400, detail="名称必填")
+    if not re.fullmatch(r"([1-9]|[1-9]\d|100)号楼", name):
+        raise HTTPException(status_code=400, detail="楼号需为 1~100号楼, 如 7号楼")
+    exists = db.query(DormitoryBuilding).filter(
+        DormitoryBuilding.name == name, DormitoryBuilding.is_deleted == False
+    ).first()
+    if exists:
+        raise HTTPException(status_code=400, detail=f"{name} 已存在")
+    b = DormitoryBuilding(name=name, code=data.get("code") or f"B{name[:-3]}", floors=data.get("floors", 6))
     db.add(b); db.commit(); db.refresh(b)
     return _building_to_dict(b, db)
 
@@ -105,9 +118,19 @@ def create_room(data: dict, db: Session = Depends(get_db),
                 current_user: SysUser = Depends(require_roles("admin"))):
     if not data.get("building_id") or not data.get("room_number"):
         raise HTTPException(status_code=400, detail="楼栋和房间号必填")
+    rn = str(data["room_number"]).strip()
+    if not (rn.isdigit() and len(rn) == 3):
+        raise HTTPException(status_code=400, detail="房间号必须为三位数字, 如 231")
+    dup = db.query(DormitoryRoom).filter(
+        DormitoryRoom.building_id == data["building_id"],
+        DormitoryRoom.room_number == rn,
+        DormitoryRoom.is_deleted == False,
+    ).first()
+    if dup:
+        raise HTTPException(status_code=400, detail=f"该楼已存在房间 {rn}")
     r = DormitoryRoom(
         building_id=data["building_id"],
-        room_number=data["room_number"],
+        room_number=rn,
         capacity=data.get("capacity", 4),
     )
     db.add(r); db.commit(); db.refresh(r)

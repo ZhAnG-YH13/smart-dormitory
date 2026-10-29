@@ -205,21 +205,14 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="宿舍房间">
-              <el-select
-                v-model="form.room_id"
-                placeholder="请选择房间"
+              <el-input
+                v-model="form.room_number"
+                placeholder="三位数房号，如 231"
+                maxlength="3"
                 clearable
-                filterable
-                style="width: 100%"
                 :disabled="!form.building_id"
-              >
-                <el-option
-                  v-for="r in formRooms"
-                  :key="r.id"
-                  :label="`${r.room_number}（${r.current_count || 0}/${r.capacity || 0}）`"
-                  :value="r.id"
-                />
-              </el-select>
+                style="width: 100%"
+              />
             </el-form-item>
           </el-col>
         </el-row>
@@ -302,7 +295,6 @@ const buildings = ref([])
 const formMajors = ref([])
 const formGrades = ref([])
 const formClasses = ref([])
-const formRooms = ref([])
 
 const dialogVisible = ref(false)
 const editingId = ref(null)
@@ -318,7 +310,7 @@ const form = reactive({
   grade_id: null,
   class_id: null,
   building_id: null,
-  room_id: null
+  room_number: ''
 })
 
 const rules = {
@@ -415,12 +407,11 @@ function resetForm() {
     grade_id: null,
     class_id: null,
     building_id: null,
-    room_id: null
+    room_number: ''
   })
   formMajors.value = []
   formGrades.value = []
   formClasses.value = []
-  formRooms.value = []
 }
 
 function openCreate() {
@@ -442,23 +433,20 @@ async function openEdit(row) {
     grade_id: row.grade_id || null,
     class_id: row.class_id || null,
     building_id: row.building_id || null,
-    room_id: row.room_id || null
+    room_number: row.room_number || ''
   })
   formMajors.value = []
   formGrades.value = []
   formClasses.value = []
-  formRooms.value = []
   try {
-    const [majors, grades, classes, rooms] = await Promise.all([
+    const [majors, grades, classes] = await Promise.all([
       row.college_id ? api.get('/majors', { params: { college_id: row.college_id } }) : Promise.resolve([]),
       row.major_id ? api.get('/grades', { params: { major_id: row.major_id } }) : Promise.resolve([]),
-      row.grade_id ? api.get('/classes', { params: { grade_id: row.grade_id } }) : Promise.resolve([]),
-      row.building_id ? api.get('/rooms', { params: { building_id: row.building_id, limit: 500 } }) : Promise.resolve([])
+      row.grade_id ? api.get('/classes', { params: { grade_id: row.grade_id } }) : Promise.resolve([])
     ])
     formMajors.value = pickItems(majors)
     formGrades.value = pickItems(grades)
     formClasses.value = pickItems(classes)
-    formRooms.value = pickItems(rooms)
   } catch (e) {
     /* ignore */
   }
@@ -505,19 +493,17 @@ async function onFormGradeChange() {
 }
 
 async function onFormBuildingChange() {
-  form.room_id = null
-  formRooms.value = []
-  if (!form.building_id) return
-  try {
-    formRooms.value = pickItems(await api.get('/rooms', { params: { building_id: form.building_id, limit: 500 } }))
-  } catch (e) {
-    /* ignore */
-  }
+  form.room_number = ''
 }
 
 async function submit() {
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  const rn = (form.room_number || '').trim()
+  if (rn && !/^\d{3}$/.test(rn)) {
+    ElMessage.warning('房间号必须是三位数字，如 231')
+    return
+  }
   submitting.value = true
   try {
     const payload = {
@@ -531,7 +517,7 @@ async function submit() {
       grade_id: form.grade_id || null,
       class_id: form.class_id || null,
       building_id: form.building_id || null,
-      room_id: form.room_id || null
+      room_number: rn || null
     }
     if (editingId.value) {
       await api.put(`/students/${editingId.value}`, payload)

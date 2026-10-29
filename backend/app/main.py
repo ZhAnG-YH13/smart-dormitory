@@ -105,16 +105,16 @@ def seed_initial_data():
             db.flush()
             print("[SEED] 创建班级: 6 个")
 
-        # 7. 创建宿舍楼和宿舍
+        # 7. 创建宿舍楼 (1~100号楼均可选) 和示例宿舍房间
         if db.query(DormitoryBuilding).count() == 0:
-            for bname in ["1号楼", "2号楼", "7号楼"]:
-                b = DormitoryBuilding(name=bname, code=f"B{bname[0]}", floors=6)
-                db.add(b)
+            for i in range(1, 101):
+                db.add(DormitoryBuilding(name=f"{i}号楼", code=f"B{i}", floors=6))
             db.flush()
 
-            buildings = db.query(DormitoryBuilding).all()
-            # 每层 40 间, 房号规则: 楼层 + 两位房号 (如 101 ~ 140, 231 表示 2 楼 31 室)
-            for b in buildings:
+            # 仅 1/2/7号楼预置示例房间(101~640), 其余房间按学生填写的三位房号自动创建
+            for b in db.query(DormitoryBuilding).filter(
+                DormitoryBuilding.name.in_(["1号楼", "2号楼", "7号楼"])
+            ).all():
                 for floor in range(1, 7):
                     for room in range(1, 41):
                         db.add(DormitoryRoom(
@@ -123,7 +123,19 @@ def seed_initial_data():
                             capacity=4
                         ))
             db.flush()
-            print("[SEED] 创建宿舍楼和宿舍房间")
+            print("[SEED] 创建宿舍楼(1~100号楼)和示例宿舍房间")
+        else:
+            # 兼容已有数据库: 补齐缺失的 1~100号楼
+            existing_names = {b.name for b in db.query(DormitoryBuilding).all()}
+            added = 0
+            for i in range(1, 101):
+                name = f"{i}号楼"
+                if name not in existing_names:
+                    db.add(DormitoryBuilding(name=name, code=f"B{i}", floors=6))
+                    added += 1
+            db.flush()
+            if added:
+                print(f"[SEED] 补齐宿舍楼: 新增 {added} 栋")
 
         # 8. 关联辅导员班级
         counselor_user = db.query(SysUser).filter(SysUser.username == "counselor01").first()
@@ -151,6 +163,8 @@ def seed_initial_data():
             }
             b7 = next((b for b in buildings if b.name == "7号楼"), buildings[0])
             room_231 = next((r for r in rooms_by_building.get(b7.id, []) if r.room_number == "231"), None)
+            # 只有预置了房间的楼栋才用于自动分配, 避免出现"有楼无房"
+            room_buildings = [b for b in buildings if rooms_by_building.get(b.id)] or buildings
 
             students_created = 0
             for i in range(10):
@@ -158,7 +172,7 @@ def seed_initial_data():
                 if i == 0 and room_231:
                     building, room = b7, room_231
                 else:
-                    building = buildings[(i - 1) % len(buildings)]
+                    building = room_buildings[(i - 1) % len(room_buildings)]
                     bl = rooms_by_building.get(building.id) or []
                     room = bl[(i - 1) % len(bl)] if bl else None
                 major = majors_all[i % len(majors_all)]
