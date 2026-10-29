@@ -1,7 +1,7 @@
 """消息中心路由"""
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, and_
 from datetime import datetime
 from typing import Optional
 from ..database import get_db
@@ -26,6 +26,33 @@ def _msg_to_dict(m: MessageNotification) -> dict:
     }
 
 
+def _visible_messages(db: Session, user: SysUser):
+    """当前用户可见的消息范围 (后端强制数据隔离)"""
+    role, uid = user.role, user.id
+    if role == "admin":
+        return db.query(MessageNotification).filter(
+            MessageNotification.recipient_role.in_(["admin", "all"])
+        )
+    if role == "counselor":
+        conds = [
+            MessageNotification.recipient_id == uid,
+            MessageNotification.recipient_role == "all",
+        ]
+        if user.counselor_class_id:
+            conds.append(and_(
+                MessageNotification.recipient_role == "counselor",
+                MessageNotification.recipient_class_id == user.counselor_class_id,
+            ))
+        return db.query(MessageNotification).filter(or_(*conds))
+    # 学生: 只能看到发给自己的消息, 以及全局公告
+    return db.query(MessageNotification).filter(
+        or_(
+            MessageNotification.recipient_id == uid,
+            MessageNotification.recipient_role == "all",
+        )
+    )
+
+
 @router.get("")
 def list_messages(
     message_type: Optional[str] = Query(None),
@@ -36,25 +63,7 @@ def list_messages(
     current_user: SysUser = Depends(get_current_user),
 ):
     """消息列表 (按角色过滤)"""
-    role = current_user.role
-    uid = current_user.id
-
-    q = db.query(MessageNotification).filter(
-        or_(
-            MessageNotification.recipient_role == role,
-            MessageNotification.recipient_role == "all",
-            MessageNotification.recipient_id == uid,
-        )
-    )
-
-    # 辅导员额外看自己班级的
-    if role == "counselor" and current_user.counselor_class_id:
-        q = q.filter(
-            or_(
-                MessageNotification.recipient_class_id == current_user.counselor_class_id,
-                MessageNotification.recipient_id == uid,
-            )
-        )
+    q = _visible_messages(db, current_user)
 
     if message_type: q = q.filter(MessageNotification.message_type == message_type)
     if is_read is not None: q = q.filter(MessageNotification.is_read == is_read)
@@ -71,7 +80,7 @@ def mark_read(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    m = db.query(MessageNotification).filter(MessageNotification.id == mid).first()
+    m = _visible_messages(db, current_user).filter(MessageNotification.id == mid).first()
     if not m: raise HTTPException(status_code=404, detail="消息不存在")
     if not m.is_read:
         m.is_read = True
@@ -85,25 +94,7 @@ def mark_all_read(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
-    role = current_user.role
-    uid = current_user.id
-
-    q = db.query(MessageNotification).filter(
-        MessageNotification.is_read == False,
-        or_(
-            MessageNotification.recipient_role == role,
-            MessageNotification.recipient_role == "all",
-            MessageNotification.recipient_id == uid,
-        )
-    )
-    if role == "counselor" and current_user.counselor_class_id:
-        q = q.filter(
-            or_(
-                MessageNotification.recipient_class_id == current_user.counselor_class_id,
-                MessageNotification.recipient_id == uid,
-            )
-        )
-
+    q = _visible_messages(db, current_user).filter(MessageNotification.is_read == False)
     count = q.count()
     q.update({"is_read": True, "read_at": datetime.now()}, synchronize_session=False)
     db.commit()
@@ -118,35 +109,13 @@ def unread_count(
     role = current_user.role
     uid = current_user.id
 
-    q = db.query(func.count(MessageNotification.id)).filter(
-        MessageNotification.is_read == False,
-        or_(
-            MessageNotification.recipient_role == role,
-            MessageNotification.recipient_role == "all",
-            MessageNotification.recipient_id == uid,
-        )
-    )
-    if role == "counselor" and current_user.counselor_class_id:
-        q = q.filter(
-            or_(
-                MessageNotification.recipient_class_id == current_user.counselor_class_id,
-                MessageNotification.recipient_id == uid,
-            )
-        )
-
-    cnt = q.scalar() or 0
+    q = _visible_messages(db, current_user).filter(MessageNotification.is_read == False)
+    cnt = q.count() or 0
 
     # 按类型聚合
-    by_type = db.query(
+    by_type = q.with_entities(
         MessageNotification.message_type,
         func.count(MessageNotification.id)
-    ).filter(
-        MessageNotification.is_read == False,
-        or_(
-            MessageNotification.recipient_role == role,
-            MessageNotification.recipient_role == "all",
-            MessageNotification.recipient_id == uid,
-        )
     ).group_by(MessageNotification.message_type).all()
 
     return {
