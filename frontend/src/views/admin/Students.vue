@@ -453,7 +453,7 @@ async function openEdit(row) {
       row.college_id ? api.get('/majors', { params: { college_id: row.college_id } }) : Promise.resolve([]),
       row.major_id ? api.get('/grades', { params: { major_id: row.major_id } }) : Promise.resolve([]),
       row.grade_id ? api.get('/classes', { params: { grade_id: row.grade_id } }) : Promise.resolve([]),
-      row.building_id ? api.get('/rooms', { params: { building_id: row.building_id, limit: 200 } }) : Promise.resolve([])
+      row.building_id ? api.get('/rooms', { params: { building_id: row.building_id, limit: 500 } }) : Promise.resolve([])
     ])
     formMajors.value = pickItems(majors)
     formGrades.value = pickItems(grades)
@@ -509,7 +509,7 @@ async function onFormBuildingChange() {
   formRooms.value = []
   if (!form.building_id) return
   try {
-    formRooms.value = pickItems(await api.get('/rooms', { params: { building_id: form.building_id, limit: 200 } }))
+    formRooms.value = pickItems(await api.get('/rooms', { params: { building_id: form.building_id, limit: 500 } }))
   } catch (e) {
     /* ignore */
   }

@@ -107,15 +107,16 @@ def seed_initial_data():
 
         # 7. 创建宿舍楼和宿舍
         if db.query(DormitoryBuilding).count() == 0:
-            for bname in ["1号楼", "2号楼"]:
+            for bname in ["1号楼", "2号楼", "7号楼"]:
                 b = DormitoryBuilding(name=bname, code=f"B{bname[0]}", floors=6)
                 db.add(b)
             db.flush()
 
             buildings = db.query(DormitoryBuilding).all()
+            # 每层 40 间, 房号规则: 楼层 + 两位房号 (如 101 ~ 140, 231 表示 2 楼 31 室)
             for b in buildings:
-                for floor in range(1, 5):
-                    for room in range(1, 5):
+                for floor in range(1, 7):
+                    for room in range(1, 41):
                         db.add(DormitoryRoom(
                             building_id=b.id,
                             room_number=f"{floor}{room:02d}",
@@ -135,7 +136,6 @@ def seed_initial_data():
         if db.query(Student).count() == 0:
             import random
             classes = db.query(ClassInfo).filter(ClassInfo.is_deleted == False).all()
-            rooms = db.query(DormitoryRoom).all()
 
             surnames = ["张", "王", "李", "赵", "刘", "陈", "杨", "黄", "周", "吴", "徐", "孙"]
             given_names = ["伟", "芳", "娜", "敏", "静", "强", "磊", "洋", "勇", "艳", "杰", "娟", "涛", "明", "超"]
@@ -143,11 +143,24 @@ def seed_initial_data():
             buildings = db.query(DormitoryBuilding).all()
             majors_all = db.query(Major).filter(Major.is_deleted == False).all()
 
+            # 按楼栋分组房间, 首位学生分配到 7号楼 231 室
+            rooms_by_building = {
+                b.id: db.query(DormitoryRoom).filter(DormitoryRoom.building_id == b.id)
+                .order_by(DormitoryRoom.room_number).all()
+                for b in buildings
+            }
+            b7 = next((b for b in buildings if b.name == "7号楼"), buildings[0])
+            room_231 = next((r for r in rooms_by_building.get(b7.id, []) if r.room_number == "231"), None)
+
             students_created = 0
             for i in range(10):
                 class_info = classes[i % len(classes)]
-                room = rooms[i % len(rooms)]
-                building = buildings[0]
+                if i == 0 and room_231:
+                    building, room = b7, room_231
+                else:
+                    building = buildings[(i - 1) % len(buildings)]
+                    bl = rooms_by_building.get(building.id) or []
+                    room = bl[(i - 1) % len(bl)] if bl else None
                 major = majors_all[i % len(majors_all)]
                 college = db.query(College).filter(College.id == major.college_id).first()
 
@@ -188,12 +201,12 @@ def seed_initial_data():
                 # 初始化在寝状态
                 db.add(PresenceStatus(student_id=student.id, is_present=(i % 2 == 0)))
 
-                # 部分学生有人脸档案
+                # 人脸档案初始为未注册, 需学生本人真实上传照片完成注册
                 if i % 4 != 0:
                     db.add(FaceProfile(
                         student_id=student.id,
-                        face_status="registered",
-                        face_quality_score=0.85
+                        face_status="unregistered",
+                        face_quality_score=0.0
                     ))
 
                 students_created += 1
@@ -204,23 +217,26 @@ def seed_initial_data():
         if db.query(CameraDevice).count() == 0:
             buildings = db.query(DormitoryBuilding).all()
             if buildings:
-                b = buildings[0]
+                b1 = next((b for b in buildings if b.name == "1号楼"), buildings[0])
+                b7 = next((b for b in buildings if b.name == "7号楼"), buildings[0])
                 cams = [
-                    ("CAM001", "1号楼东门入口", "IN", b.id),
-                    ("CAM002", "1号楼东门出口", "OUT", b.id),
-                    ("CAM003", "1号楼西门入口", "IN", b.id),
-                    ("CAM004", "1号楼西门出口", "OUT", b.id),
+                    ("CAM001", "东门入口", "IN", b1),
+                    ("CAM002", "东门出口", "OUT", b1),
+                    ("CAM003", "西门入口", "IN", b1),
+                    ("CAM004", "西门出口", "OUT", b1),
+                    ("CAM005", "东门入口", "IN", b7),
+                    ("CAM006", "东门出口", "OUT", b7),
                 ]
-                for code, name, direction, bid in cams:
+                for code, spot, direction, b in cams:
                     db.add(CameraDevice(
                         camera_code=code,
-                        name=name,
-                        location=b.name + " " + name.split("东")[0].split("西")[0],
+                        name=f"{b.name}{spot}",
+                        location=b.name,
                         direction=direction,
-                        building_id=bid,
+                        building_id=b.id,
                         device_status="online"
                     ))
-                print("[SEED] 创建摄像头: 4 个")
+                print("[SEED] 创建摄像头: 6 个")
 
         # 11. 角色 / 权限 / 用户角色关联
         if db.query(SysRole).count() == 0:

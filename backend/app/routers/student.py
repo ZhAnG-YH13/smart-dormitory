@@ -243,20 +243,27 @@ async def import_students(
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(require_roles("admin")),
 ):
-    """Excel 批量导入学生 (.xlsx)"""
-    if not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx 文件")
+    """批量导入学生 (.xlsx / .csv)"""
+    fname = (file.filename or "").lower()
+    if not (fname.endswith(".xlsx") or fname.endswith(".csv")):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .csv 文件")
 
+    content = await file.read()
     try:
-        import openpyxl
-        from io import BytesIO
-        content = await file.read()
-        wb = openpyxl.load_workbook(BytesIO(content), data_only=True)
-        ws = wb.active
+        if fname.endswith(".csv"):
+            import csv
+            from io import StringIO
+            text = content.decode("utf-8-sig")
+            rows = [tuple(r) for r in csv.reader(StringIO(text)) if any((c or "").strip() for c in r)]
+        else:
+            import openpyxl
+            from io import BytesIO
+            wb = openpyxl.load_workbook(BytesIO(content), data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Excel解析失败: {e}")
+        raise HTTPException(status_code=400, detail=f"文件解析失败: {e}")
 
-    rows = list(ws.iter_rows(values_only=True))
     if len(rows) < 2:
         raise HTTPException(status_code=400, detail="Excel内容为空")
 

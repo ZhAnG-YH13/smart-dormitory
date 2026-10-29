@@ -87,7 +87,7 @@ def list_rooms(
     building_id: Optional[int] = Query(None),
     keyword: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(20, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
 ):
