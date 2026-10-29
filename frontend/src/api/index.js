@@ -33,7 +33,10 @@ api.interceptors.response.use(
     if (status === 401) {
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      if (router.currentRoute.value.path !== '/login') {
+      if (router.currentRoute.value.path === '/login') {
+        // 登录页本身返回 401 时直接提示真实原因(如用户不存在/密码错误)
+        ElMessage.error(msg)
+      } else {
         ElMessage.error('登录已失效，请重新登录')
         router.push('/login')
       }
