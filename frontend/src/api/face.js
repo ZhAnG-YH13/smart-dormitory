@@ -15,10 +15,13 @@ export function getFaceStatus() {
   return request({ url: '/api/face/status', method: 'get' })
 }
 
-export function verifyFace(imageBase64) {
+export function verifyFace(file) {
+  const formData = new FormData()
+  formData.append('file', file)
   return request({
     url: '/api/face/verify',
     method: 'post',
-    data: { image_base64: imageBase64 }
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' }
   })
 }

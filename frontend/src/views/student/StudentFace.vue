@@ -108,6 +108,49 @@
         </el-tab-pane>
       </el-tabs>
     </div>
+
+    <div v-if="isRegistered" class="page-card mt-16">
+      <div class="page-header">
+        <h2 class="page-title">人脸验证（验证本人能否通过门禁）</h2>
+      </div>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="上传一张现场照片，系统会与本人已注册特征做真实比对；相似度 ≥ 0.60 判定通过"
+      />
+      <div class="upload-area mt-16">
+        <el-upload
+          drag
+          :auto-upload="false"
+          :show-file-list="false"
+          accept="image/*"
+          :on-change="onVerifyFileChange"
+        >
+          <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+          <div class="el-upload__text">将待验证照片拖到此处，或 <em>点击选择</em></div>
+        </el-upload>
+
+        <div v-if="verifyPreview" class="preview-box">
+          <div class="text-muted">验证照片</div>
+          <img :src="verifyPreview" alt="验证照片预览" />
+        </div>
+
+        <div class="actions">
+          <el-button type="success" :loading="verifying" :disabled="!verifyFile" @click="doVerify">
+            <el-icon><CircleCheck /></el-icon>验证人脸
+          </el-button>
+        </div>
+
+        <el-alert
+          v-if="verifyResult"
+          class="mt-16"
+          :type="verifyResult.success ? 'success' : 'error'"
+          :title="verifyResult.message"
+          show-icon
+        />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -127,6 +170,12 @@ const previewUrl = ref('')
 const videoRef = ref(null)
 const stream = ref(null)
 const cameraOn = ref(false)
+
+// 人脸验证
+const verifyFile = ref(null)
+const verifyPreview = ref('')
+const verifying = ref(false)
+const verifyResult = ref(null)
 
 const FACE_MAP = {
   registered: { text: '已注册', type: 'success' },
@@ -176,6 +225,43 @@ function clearSelected() {
   if (previewUrl.value) {
     URL.revokeObjectURL(previewUrl.value)
     previewUrl.value = ''
+  }
+}
+
+function onVerifyFileChange(uploadFile) {
+  const raw = uploadFile?.raw
+  if (!raw) return
+  if (raw.size > 10 * 1024 * 1024) {
+    ElMessage.warning('图片大小不能超过 10MB')
+    return
+  }
+  if (verifyPreview.value) URL.revokeObjectURL(verifyPreview.value)
+  verifyFile.value = raw
+  verifyPreview.value = URL.createObjectURL(raw)
+  verifyResult.value = null
+}
+
+async function doVerify() {
+  if (!verifyFile.value) return ElMessage.warning('请先选择一张待验证照片')
+  verifying.value = true
+  verifyResult.value = null
+  try {
+    const fd = new FormData()
+    fd.append('file', verifyFile.value)
+    const res = await api.post('/face/verify', fd)
+    const sim = Number(res?.similarity || 0).toFixed(4)
+    if (res?.success) {
+      verifyResult.value = { success: true, message: `验证通过：相似度 ${sim}（阈值 0.60），本人可正常通过人脸门禁` }
+    } else {
+      const reason = reasonMap[res?.reason]
+      const detail = reason || res?.detail || '人脸与注册特征不匹配'
+      verifyResult.value = { success: false, message: `验证未通过：相似度 ${sim}（阈值 0.60）· ${detail}` }
+    }
+    await loadStatus()
+  } catch (e) {
+    // 错误提示已由拦截器处理
+  } finally {
+    verifying.value = false
   }
 }
 
@@ -301,6 +387,7 @@ function onTabChange(name) {
 onUnmounted(() => {
   stopCamera()
   clearSelected()
+  if (verifyPreview.value) URL.revokeObjectURL(verifyPreview.value)
 })
 
 loadStatus()

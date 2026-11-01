@@ -178,6 +178,42 @@
             <el-icon :size="36"><Camera /></el-icon>
             <div class="text-muted">选择摄像头与学生后，点击「模拟刷脸通行」查看识别结果</div>
           </div>
+
+          <el-divider content-position="left">真实刷脸开门（上传照片，AI 实际比对）</el-divider>
+          <div class="real-verify">
+            <el-upload
+              :auto-upload="false"
+              :show-file-list="false"
+              accept="image/*"
+              :on-change="onRealFileChange"
+            >
+              <el-button plain size="small">
+                <el-icon><Upload /></el-icon>选择照片
+              </el-button>
+            </el-upload>
+            <span class="text-muted file-name">{{ realFile ? realFile.name : '未选择照片' }}</span>
+            <el-button
+              type="success"
+              size="small"
+              :loading="realVerifying"
+              :disabled="!selectedCameraId || !realFile"
+              @click="doRealVerify"
+            >
+              真实刷脸开门
+            </el-button>
+          </div>
+
+          <el-alert
+            v-if="realResult"
+            class="mt-16"
+            :type="realResult.success ? 'success' : 'error'"
+            :closable="false"
+            show-icon
+            :title="realResult.title"
+          />
+          <div v-if="realResult" class="text-muted" style="margin-top: 8px">
+            {{ realResult.desc }}
+          </div>
         </div>
       </el-col>
 
@@ -233,6 +269,11 @@ const selectedStudent = ref(null)
 const similarity = ref(0.85)
 const simulating = ref(false)
 const result = ref(null)
+
+// 真实刷脸开门
+const realFile = ref(null)
+const realVerifying = ref(false)
+const realResult = ref(null)
 
 let statusTimer = null
 let recordsTimer = null
@@ -365,6 +406,58 @@ async function doSimulate(sim) {
   } finally {
     simulating.value = false
   }
+}
+
+async function doRealVerify() {
+  if (!selectedCameraId.value) {
+    ElMessage.warning('请先选择摄像头')
+    return
+  }
+  if (!realFile.value) {
+    ElMessage.warning('请先选择一张人脸照片')
+    return
+  }
+  realVerifying.value = true
+  realResult.value = null
+  try {
+    const fd = new FormData()
+    fd.append('file', realFile.value)
+    fd.append('camera_id', String(selectedCameraId.value))
+    const res = await api.post('/face/batch-verify', fd)
+    if (res.success) {
+      realResult.value = {
+        success: true,
+        title: `识别成功：${res.student?.name || ''}（${res.student?.student_no || ''}），相似度 ${Number(res.similarity).toFixed(4)}`,
+        desc: `${res.direction === 'IN' ? '进入' : '离开'} · 识别耗时 ${res.recognition_ms} ms · 在寝状态已更新为「${res.presence ? '在寝' : '不在寝'}」· 门禁记录 ID ${res.access_record_id}` +
+          (res.duplicate ? ' · 检测到 30 秒内重复通行，已生成业务异常' : '')
+      }
+      ElMessage.success(`开门成功：${res.student?.name || ''}`)
+    } else {
+      realResult.value = {
+        success: false,
+        title: `识别失败：相似度 ${Number(res.similarity || 0).toFixed(4)} < 阈值 ${res.threshold || 0.6}`,
+        desc: (res.detail || '未匹配到可信的已注册人脸') + ' · 已生成 AI 识别异常并自动通知管理员'
+      }
+      ElMessage.warning('人脸识别失败')
+    }
+    loadRecords()
+    loadCameraStatus()
+  } catch (e) {
+    /* 错误提示由拦截器处理 */
+  } finally {
+    realVerifying.value = false
+  }
+}
+
+function onRealFileChange(uploadFile) {
+  const raw = uploadFile?.raw
+  if (!raw) return
+  if (raw.size > 10 * 1024 * 1024) {
+    ElMessage.warning('图片大小不能超过 10MB')
+    return
+  }
+  realFile.value = raw
+  realResult.value = null
 }
 
 async function simulateUnregistered() {
@@ -581,6 +674,18 @@ onUnmounted(() => {
 .action-row .el-button {
   flex: 1;
   margin-left: 0;
+}
+
+.real-verify {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.real-verify .file-name {
+  font-size: 12px;
+  word-break: break-all;
 }
 
 .result-panel {
