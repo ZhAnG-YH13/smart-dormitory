@@ -50,6 +50,10 @@
           <div class="demo-line">辅导员：counselor01 / 123456</div>
           <div class="demo-line">学生：20231001 / 123456</div>
         </el-alert>
+
+        <el-button class="terminal-entry" size="large" plain @click="$router.push('/terminal')">
+          🚪 门禁终端入口（免登录 · 实时刷脸开门）
+        </el-button>
       </div>
     </div>
   </div>
@@ -164,6 +168,11 @@ async function onSubmit() {
 
 .tip {
   margin-top: 20px;
+}
+
+.terminal-entry {
+  width: 100%;
+  margin-top: 14px;
 }
 
 .demo-line {

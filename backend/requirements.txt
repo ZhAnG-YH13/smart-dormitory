@@ -12,6 +12,8 @@ opencv-python>=4.10.0
 numpy>=2.0.0
 Pillow>=10.4.0
 python-docx>=1.1.2
+# 局域网 HTTPS 代理生成自签名证书(手机实时摄像头入口)
+cryptography>=42.0.0
 
 # 可选: 真实 dlib 人脸特征提取(128维), 安装成功则自动启用
 # Windows 需要预编译的 dlib wheel, 若安装失败系统会自动回退到 OpenCV 方案

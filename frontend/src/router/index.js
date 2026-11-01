@@ -7,6 +7,12 @@ import Login from '@/views/Login.vue'
 const routes = [
   { path: '/login', name: 'Login', component: Login, meta: { public: true } },
   {
+    path: '/terminal',
+    name: 'GateTerminal',
+    component: () => import('@/views/terminal/GateTerminal.vue'),
+    meta: { public: true }
+  },
+  {
     path: '/',
     component: MainLayout,
     redirect: () => {

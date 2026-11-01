@@ -16,6 +16,9 @@ env/
 # ---------- 上传的图片/文件 ----------
 backend/uploads/
 
+# ---------- 自签名证书（本地 HTTPS 演示用，不入库） ----------
+scripts/certs/
+
 # ---------- Node / 前端 ----------
 node_modules/
 dist/

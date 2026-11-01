@@ -97,6 +97,28 @@ npm run dev
 
 浏览器访问 <http://localhost:5173>（Vite 已将 `/api` 与 `/uploads` 代理到后端 8000 端口）。
 
+### 3. 门禁终端（免登录，可装在手机 / 平板 / 电脑 / 一体机）
+
+浏览器打开 <http://localhost:5173/terminal>，选择门禁设备后点「启动实时识别」：
+
+- 前置摄像头**实时取帧**上传后端做真实比对（默认每 1.8 秒一帧），不是上传照片测相似度
+- 识别成功：绿色全屏提示 + 提示音，显示姓名 / 相似度 / 进出方向 / 识别耗时，并自动写入门禁记录与在寝状态
+- 识别失败：红色提示，自动生成 AI 识别异常并通知管理员（同一设备 8 秒内失败只记一次，避免刷屏）
+- 同一学生在同一设备 8 秒内重复识别不重复写记录与异常
+
+**手机/平板使用实时摄像头必须走 HTTPS**（浏览器禁止非 localhost 的 HTTP 页面调用摄像头）。项目内置一个自签名 HTTPS 代理：
+
+```bash
+# 需先安装 cryptography（已在 requirements.txt 中）
+python scripts/https_proxy.py --port 5443 --target 5173
+```
+
+然后在手机浏览器打开 `https://<电脑局域网IP>:5443/terminal`（例如 `https://192.168.43.40:5443/terminal`）。
+首次访问提示证书不安全时，选择「继续访问 / 高级 → 继续前往」即可。电脑本机仍可用 `http://localhost:5173/terminal`，不弹证书。
+
+> 局域网内手机/其他电脑直接访问 `http://<电脑IP>:5173` 也能登录系统，但**实时摄像头**只有 HTTPS 地址才可用。
+
+
 ---
 
 ## 四、演示账号
@@ -179,6 +201,7 @@ npm run dev
 | 组织 | `/api/colleges`、`/api/majors`、`/api/grades`、`/api/classes`（含 `/{id}/students`） |
 | 宿舍 | `/api/buildings`、`/api/rooms` |
 | 人脸 | `POST /api/face/register`、`GET /api/face/status`、`POST /api/face/verify`、`POST /api/face/batch-verify`、`DELETE /api/face/cancel` |
+| 门禁终端 | `GET /api/face/terminal-cameras`（公开）、`POST /api/face/terminal-verify`（公开，实时取帧识别 + 8 秒冷却） |
 | 摄像头 | `GET/POST/PUT/DELETE /api/cameras`、`POST /api/cameras/{id}/simulate`、`GET /api/cameras/{id}/status` |
 | 门禁 | `GET /api/access/records`、`GET /api/access/today`、`GET /api/presence` |
 | 异常 | `GET/POST /api/abnormals`、`GET /api/abnormals/{id}`、`POST /api/abnormals/{id}/handle`、`POST /api/abnormals/{id}/close` |
