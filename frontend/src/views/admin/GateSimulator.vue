@@ -191,6 +191,9 @@
                 <el-icon><Upload /></el-icon>选择照片
               </el-button>
             </el-upload>
+            <el-button plain size="small" @click="onRealCapture">
+              <el-icon><Camera /></el-icon>手机拍照
+            </el-button>
             <span class="text-muted file-name">{{ realFile ? realFile.name : '未选择照片' }}</span>
             <el-button
               type="success"
@@ -252,6 +255,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { capturePhoto } from '@/utils/cameraInput'
 import api from '@/api'
 
 const cameras = ref([])
@@ -447,6 +451,10 @@ async function doRealVerify() {
   } finally {
     realVerifying.value = false
   }
+}
+
+function onRealCapture() {
+  capturePhoto((file) => onRealFileChange({ raw: file }), 'user')
 }
 
 function onRealFileChange(uploadFile) {

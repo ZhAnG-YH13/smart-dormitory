@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
 from datetime import datetime
 import os
@@ -339,6 +340,160 @@ def seed_initial_data():
         db.close()
 
 
+LANDING_PAGE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>智慧宿舍人脸门禁与学生管理系统 · 后端服务</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    color: #e8eef7;
+    background: radial-gradient(1200px 600px at 10% -10%, #1e3a5f 0%, transparent 60%),
+                radial-gradient(900px 500px at 100% 0%, #14364f 0%, transparent 55%),
+                linear-gradient(160deg, #0d1726 0%, #111f30 55%, #0b1520 100%);
+    display: flex;
+    justify-content: center;
+    padding: 40px 18px 60px;
+  }
+  .wrap { width: 100%; max-width: 980px; }
+  .hero { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  .logo {
+    width: 56px; height: 56px; border-radius: 16px;
+    background: linear-gradient(135deg, #409eff, #2b6fd6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; box-shadow: 0 10px 30px rgba(64, 158, 255, .35);
+  }
+  h1 { font-size: 24px; font-weight: 700; letter-spacing: .5px; }
+  .sub { margin-top: 6px; font-size: 13px; color: #8ba3bf; }
+  .status { display: flex; gap: 10px; flex-wrap: wrap; margin: 22px 0 26px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 7px 14px; border-radius: 999px; font-size: 12.5px;
+    background: rgba(255, 255, 255, .06); border: 1px solid rgba(255, 255, 255, .1);
+    color: #b9cbe0;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    background: rgba(255, 255, 255, .045);
+    border: 1px solid rgba(255, 255, 255, .09);
+    border-radius: 16px; padding: 18px 20px;
+    backdrop-filter: blur(6px);
+    transition: transform .2s ease, border-color .2s ease;
+  }
+  .card:hover { transform: translateY(-2px); border-color: rgba(64, 158, 255, .5); }
+  .card h2 { font-size: 15px; margin-bottom: 8px; color: #fff; }
+  .card p { font-size: 12.5px; line-height: 1.7; color: #93a9c2; }
+  .links { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 11px 18px; border-radius: 10px; text-decoration: none;
+    font-size: 13.5px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, #409eff, #2f7bdb);
+    box-shadow: 0 8px 22px rgba(64, 158, 255, .3);
+  }
+  .btn.ghost {
+    background: rgba(255, 255, 255, .06); color: #cfe0f2;
+    border: 1px solid rgba(255, 255, 255, .14); box-shadow: none;
+  }
+  .section-title { font-size: 13px; letter-spacing: 1px; color: #7d94ad; margin: 26px 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+  th { color: #8da6c0; font-weight: 500; }
+  td code { color: #7cc6ff; background: rgba(64, 158, 255, .12); padding: 2px 6px; border-radius: 6px; }
+  .api { font-size: 12px; color: #9fb6cd; line-height: 2; }
+  .api code { color: #7cc6ff; }
+  footer { margin-top: 32px; text-align: center; font-size: 11.5px; color: #5e7488; }
+  @media (max-width: 560px) {
+    h1 { font-size: 19px; }
+    .logo { width: 46px; height: 46px; font-size: 21px; }
+    .links .btn { flex: 1 1 100%; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="logo">🏛️</div>
+    <div>
+      <h1>智慧宿舍人脸门禁与学生管理系统</h1>
+      <div class="sub">Smart Dormitory Face Access &amp; Student Management · 后端服务</div>
+    </div>
+  </div>
+
+  <div class="status">
+    <span class="chip"><span class="dot"></span>服务运行中</span>
+    <span class="chip">版本 v1.0.0</span>
+    <span class="chip">FastAPI + SQLAlchemy</span>
+    <span class="chip">AI 引擎 face_recognition (dlib 128D)</span>
+    <span class="chip">数据库 SQLite</span>
+  </div>
+
+  <div class="links">
+    <a class="btn" href="/docs">📘 打开接口文档 Swagger</a>
+    <a class="btn ghost" href="/redoc">📄 ReDoc 文档</a>
+    <a class="btn ghost" id="front-link" href="http://localhost:5173">🖥️ 进入前端系统</a>
+    <a class="btn ghost" href="/health">❤️ 健康检查</a>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>👤 三类角色权限</h2>
+      <p>学校管理员（全校）、辅导员（仅本班）、学生（仅本人）。权限由后端 JWT + 角色校验强制执行，前端只做展示。</p>
+    </div>
+    <div class="card">
+      <h2>🧠 真实人脸识别</h2>
+      <p>检测 → 质量评估 → 128 维特征提取 → 相似度比对 → 阈值判定（0.6）。含模糊、过暗、过曝、多脸、无人脸等判定。</p>
+    </div>
+    <div class="card">
+      <h2>🚪 门禁与在寝状态</h2>
+      <p>刷脸成功写入 IN/OUT 记录，实时更新在寝状态；30 秒内重复通行自动产生业务异常。</p>
+    </div>
+    <div class="card">
+      <h2>⚠️ 异常闭环</h2>
+      <p>设备 / 图像质量 / AI 识别 / 业务四类异常，自动生成原因、推送消息给管理员与相关学生，并支持处理与结果回推。</p>
+    </div>
+  </div>
+
+  <div class="section-title">演示账号</div>
+  <div class="card">
+    <table>
+      <tr><th>角色</th><th>用户名</th><th>密码</th><th>说明</th></tr>
+      <tr><td>学校管理员</td><td><code>admin</code></td><td><code>admin123</code></td><td>全校数据、导入建号、设备与异常管理</td></tr>
+      <tr><td>辅导员</td><td><code>counselor01</code></td><td><code>123456</code></td><td>仅本班学生、在寝与异常</td></tr>
+      <tr><td>学生</td><td><code>20231001</code></td><td><code>123456</code></td><td>本人信息、人脸注册、个人门禁记录</td></tr>
+    </table>
+  </div>
+
+  <div class="section-title">接口分组</div>
+  <div class="card api">
+    <code>/api/auth</code> 登录 / 当前用户 / 修改密码 &nbsp;·&nbsp;
+    <code>/api/students</code> 学生与导入建号 &nbsp;·&nbsp;
+    <code>/api/face</code> 注册 / 验证 / 批量验证<br />
+    <code>/api/cameras</code> 设备管理 / 模拟通行 &nbsp;·&nbsp;
+    <code>/api/access</code> 门禁记录 &nbsp;·&nbsp;
+    <code>/api/abnormals</code> 异常与处理<br />
+    <code>/api/stats</code> 学生 / 门禁 / 班级 / AI / 设备 / 异常统计 &nbsp;·&nbsp;
+    <code>/api/messages</code> 消息通知 &nbsp;·&nbsp;
+    <code>/api/logs</code> 操作日志
+  </div>
+
+  <footer>智慧宿舍人脸门禁与学生管理系统 · 人工智能课程实践</footer>
+</div>
+<script>
+  // 手机/局域网访问时，前端地址跟随当前主机名
+  var host = location.hostname || 'localhost';
+  document.getElementById('front-link').href = 'http://' + host + ':5173';
+</script>
+</body>
+</html>
+"""
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期"""
@@ -384,6 +539,11 @@ def create_app() -> FastAPI:
     @app.get("/health")
     def health():
         return {"status": "ok", "service": "smart-dormitory", "version": "1.0.0"}
+
+    # 后端控制台首页（浏览器直接访问 8000 时展示）
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        return HTMLResponse(content=LANDING_PAGE)
 
     # 包含所有路由
     from app.routers import auth, student, organization, dormitory, face, camera, access, abnormal, statistics, messages, system

@@ -1,43 +1,33 @@
 <template>
   <el-container class="layout">
-    <el-aside :width="collapsed ? '64px' : '220px'" class="aside">
-      <div class="brand">
-        <el-icon :size="22"><School /></el-icon>
-        <span v-show="!collapsed" class="brand-text">智慧宿舍门禁</span>
-      </div>
-      <el-menu
-        :default-active="activeMenu"
-        :collapse="collapsed"
-        router
-        background-color="#1f2d3d"
-        text-color="#c0c4cc"
-        active-text-color="#409eff"
-        class="menu"
-      >
-        <template v-for="item in menus" :key="item.path">
-          <el-sub-menu v-if="item.children" :index="item.path">
-            <template #title>
-              <el-icon><component :is="item.icon" /></el-icon>
-              <span>{{ item.title }}</span>
-            </template>
-            <el-menu-item v-for="c in item.children" :key="c.path" :index="c.path">
-              {{ c.title }}
-            </el-menu-item>
-          </el-sub-menu>
-          <el-menu-item v-else :index="item.path">
-            <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.title }}</span>
-          </el-menu-item>
-        </template>
-      </el-menu>
+    <el-aside v-if="!isMobile" :width="collapsed ? '64px' : '220px'" class="aside">
+      <SideMenu :menus="menus" :active-menu="activeMenu" :collapsed="collapsed" />
     </el-aside>
+
+    <el-drawer
+      v-model="mobileMenu"
+      direction="ltr"
+      size="230px"
+      :with-header="false"
+      class="mobile-drawer"
+    >
+      <SideMenu
+        :menus="menus"
+        :active-menu="activeMenu"
+        :collapsed="false"
+        @select="mobileMenu = false"
+      />
+    </el-drawer>
 
     <el-container>
       <el-header class="header">
         <div class="header-left">
-          <el-icon class="collapse-btn" @click="collapsed = !collapsed">
+          <el-icon v-if="!isMobile" class="collapse-btn" @click="collapsed = !collapsed">
             <Fold v-if="!collapsed" />
             <Expand v-else />
+          </el-icon>
+          <el-icon v-else class="collapse-btn" @click="mobileMenu = true">
+            <Menu />
           </el-icon>
           <span class="page-name">{{ currentTitle }}</span>
         </div>
@@ -90,10 +80,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import SideMenu from '@/components/SideMenu.vue'
 import api from '@/api'
 
 const store = useUserStore()
@@ -101,6 +92,20 @@ const route = useRoute()
 const router = useRouter()
 
 const collapsed = ref(false)
+const mobileMenu = ref(false)
+const isMobile = ref(false)
+
+function syncViewport() {
+  isMobile.value = window.innerWidth < 900
+  if (!isMobile.value) mobileMenu.value = false
+}
+
+onMounted(() => {
+  syncViewport()
+  window.addEventListener('resize', syncViewport)
+})
+
+onUnmounted(() => window.removeEventListener('resize', syncViewport))
 const pwdVisible = ref(false)
 const pwdLoading = ref(false)
 const pwdForm = ref({ old_password: '', new_password: '', confirm: '' })
@@ -247,24 +252,19 @@ onMounted(() => {
   overflow-x: hidden;
 }
 
-.brand {
-  height: 56px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 18px;
-  color: #fff;
-  font-weight: 600;
-  white-space: nowrap;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
+@media (max-width: 900px) {
+  .header {
+    padding: 0 12px;
+  }
 
-.brand-text {
-  font-size: 15px;
-}
+  .user-name,
+  .header-right .el-tag {
+    display: none;
+  }
 
-.menu {
-  border-right: none;
+  .main {
+    padding: 12px;
+  }
 }
 
 .header {

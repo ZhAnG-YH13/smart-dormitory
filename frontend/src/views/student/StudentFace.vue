@@ -82,11 +82,23 @@
               >
                 <el-icon><Upload /></el-icon>上传并注册
               </el-button>
+              <el-button @click="onMobileCapture">
+                <el-icon><Camera /></el-icon>手机拍照
+              </el-button>
             </div>
           </div>
         </el-tab-pane>
 
         <el-tab-pane label="摄像头采集" name="camera">
+          <el-alert
+            v-if="!secureContext"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="mt-16"
+            style="margin-top: 0; margin-bottom: 12px"
+            title="手机通过局域网 HTTP 访问时浏览器禁止实时摄像头，请改用「上传照片 → 手机拍照」"
+          />
           <div class="camera-area">
             <div class="video-box">
               <video ref="videoRef" autoplay playsinline muted></video>
@@ -140,6 +152,9 @@
           <el-button type="success" :loading="verifying" :disabled="!verifyFile" @click="doVerify">
             <el-icon><CircleCheck /></el-icon>验证人脸
           </el-button>
+          <el-button @click="onVerifyCapture">
+            <el-icon><Camera /></el-icon>手机拍照
+          </el-button>
         </div>
 
         <el-alert
@@ -157,6 +172,7 @@
 <script setup>
 import { ref, computed, nextTick, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { capturePhoto } from '@/utils/cameraInput'
 import api from '@/api'
 
 const status = ref({})
@@ -164,6 +180,7 @@ const activeTab = ref('upload')
 const registering = ref(false)
 const cancelling = ref(false)
 const result = ref(null)
+const secureContext = window.isSecureContext
 
 const selectedFile = ref(null)
 const previewUrl = ref('')
@@ -226,6 +243,14 @@ function clearSelected() {
     URL.revokeObjectURL(previewUrl.value)
     previewUrl.value = ''
   }
+}
+
+function onMobileCapture() {
+  capturePhoto((file) => onFileChange({ raw: file }), 'user')
+}
+
+function onVerifyCapture() {
+  capturePhoto((file) => onVerifyFileChange({ raw: file }), 'user')
 }
 
 function onVerifyFileChange(uploadFile) {
