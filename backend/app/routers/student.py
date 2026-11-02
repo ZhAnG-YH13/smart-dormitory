@@ -332,28 +332,46 @@ async def import_students(
     errors = []
 
     for idx, row in enumerate(rows[1:], start=2):
+        # 每行一个保存点，单行失败不影响其他行，也避免会话进入待回滚状态
+        savepoint = db.begin_nested()
         try:
             row_dict = {header[i]: row[i] for i in range(len(header))}
             student_no = str(row_dict.get("学号", "") or row_dict.get("student_no", "")).strip()
             name = str(row_dict.get("姓名", "") or row_dict.get("name", "")).strip()
             if not student_no or not name:
+                savepoint.rollback()
                 fail += 1
                 errors.append(f"第{idx}行: 学号或姓名为空")
                 continue
 
-            exists = db.query(Student).filter(Student.student_no == student_no, Student.is_deleted == False).first()
-            if exists:
+            # 学号上的唯一索引包含软删除记录，必须连已删除的一起查，才能决定新增还是恢复
+            exists = db.query(Student).filter(Student.student_no == student_no).first()
+            if exists and not exists.is_deleted:
+                savepoint.rollback()
                 fail += 1
                 errors.append(f"第{idx}行: 学号 {student_no} 已存在")
                 continue
 
-            s = Student(
-                student_no=student_no,
-                name=name,
-                gender=str(row_dict.get("性别", "") or row_dict.get("gender", "") or "").strip() or None,
-                phone=str(row_dict.get("手机号", "") or row_dict.get("phone", "") or "").strip() or None,
-                id_card=str(row_dict.get("身份证", "") or row_dict.get("id_card", "") or "").strip() or None,
-            )
+            gender = str(row_dict.get("性别", "") or row_dict.get("gender", "") or "").strip() or None
+            phone = str(row_dict.get("手机号", "") or row_dict.get("phone", "") or "").strip() or None
+            id_card = str(row_dict.get("身份证", "") or row_dict.get("id_card", "") or "").strip() or None
+
+            if exists:
+                # 复用被逻辑删除的旧档案，避免 student_no 唯一索引冲突
+                s = exists
+                s.is_deleted = False
+                s.name = name
+                s.gender = gender
+                s.phone = phone
+                s.id_card = id_card
+            else:
+                s = Student(
+                    student_no=student_no,
+                    name=name,
+                    gender=gender,
+                    phone=phone,
+                    id_card=id_card,
+                )
 
             college_name = str(row_dict.get("学院", "") or row_dict.get("college", "") or "").strip()
             major_name = str(row_dict.get("专业", "") or row_dict.get("major", "") or "").strip()
@@ -429,10 +447,12 @@ async def import_students(
                 db.flush()
                 s.user_id = u.id
                 accounts_created += 1
+            savepoint.commit()
             success += 1
         except Exception as e:
+            savepoint.rollback()
             fail += 1
-            errors.append(f"第{idx}行: {e}")
+            errors.append(f"第{idx}行: {str(e).splitlines()[0][:150]}")
 
     db.commit()
 
