@@ -181,6 +181,41 @@ def extract_embedding(img: np.ndarray, face_location=None) -> np.ndarray | None:
     return None
 
 
+def encode_frame(image_input, source: str = "bytes") -> tuple[list, int]:
+    """检测画面中的所有人脸并逐张提取特征
+
+    Args:
+        image_input: 摄像头帧 / 图片
+        source: 'bytes', 'base64', 'path'
+
+    Returns:
+        (embeddings, face_count) —— face_count 为检测到的人脸数, embeddings 为成功提特征的人脸向量
+    """
+    try:
+        if source == "base64":
+            img = _base64_to_cv2(image_input)
+        elif source == "bytes":
+            img = _bytes_to_cv2(image_input)
+        elif source == "path":
+            img = cv2.imread(image_input)
+            if img is None:
+                return [], 0
+        elif isinstance(image_input, Image.Image):
+            img = _pil_to_cv2(image_input)
+        else:
+            img = np.array(image_input)
+    except Exception:
+        return [], 0
+
+    face_locations = detect_faces(img)
+    embeddings = []
+    for loc in face_locations:
+        emb = extract_embedding(img, loc)
+        if emb is not None:
+            embeddings.append(emb)
+    return embeddings, len(face_locations)
+
+
 def register_face(image_input, source: str = "file") -> FaceResult:
     """
     人脸识别注册（上传/采集）完整流程

@@ -102,19 +102,14 @@
           <div class="camera-area">
             <div class="video-box">
               <video ref="videoRef" autoplay playsinline muted></video>
-              <div v-if="!cameraOn" class="video-placeholder">摄像头未开启</div>
+              <div v-if="!cameraOn" class="video-placeholder">摄像头正在自动开启…</div>
             </div>
 
             <div class="actions">
-              <el-button v-if="!cameraOn" type="primary" @click="openCamera">
-                <el-icon><VideoCamera /></el-icon>开启摄像头
+              <el-button type="primary" :loading="registering" :disabled="!cameraOn" @click="captureAndRegister">
+                <el-icon><Camera /></el-icon>拍照并注册
               </el-button>
-              <template v-else>
-                <el-button type="primary" :loading="registering" @click="captureAndRegister">
-                  <el-icon><Camera /></el-icon>拍照并注册
-                </el-button>
-                <el-button @click="stopCamera">关闭摄像头</el-button>
-              </template>
+              <span style="color: #909399; font-size: 12px">摄像头由系统自动开启并常开，学生端无启停权限</span>
             </div>
           </div>
         </el-tab-pane>
@@ -331,6 +326,7 @@ async function doRegister(fd) {
 }
 
 async function openCamera() {
+  if (cameraOn.value && stream.value) return
   try {
     const s = await navigator.mediaDevices.getUserMedia({ video: true })
     stream.value = s
@@ -405,8 +401,9 @@ function cancelFace() {
   }).catch(() => {})
 }
 
+// 摄像头由系统自动开启并常开，学生端不提供启停操作
 function onTabChange(name) {
-  if (name !== 'camera') stopCamera()
+  if (name === 'camera') openCamera()
 }
 
 onUnmounted(() => {

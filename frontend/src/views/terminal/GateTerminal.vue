@@ -13,7 +13,6 @@
           v-model="cameraCode"
           placeholder="选择门禁设备"
           size="large"
-          :disabled="running"
           @change="onCameraChange"
         >
           <el-option
@@ -26,18 +25,10 @@
             <span class="opt-tag">{{ c.direction === 'IN' ? '入口' : '出口' }}</span>
           </el-option>
         </el-select>
-        <el-button
-          v-if="!running"
-          type="primary"
-          size="large"
-          :disabled="!cameraCode"
-          @click="start"
-        >
-          <el-icon><VideoCamera /></el-icon>启动实时识别
-        </el-button>
-        <el-button v-else type="danger" size="large" plain @click="stop">
-          <el-icon><VideoPause /></el-icon>停止
-        </el-button>
+        <span class="live-pill" :class="cameraReady ? 'ok' : (cameraError ? 'err' : '')">
+          <i class="dot"></i>
+          {{ cameraReady ? '摄像头常开 · 实时识别中' : (cameraError ? '摄像头异常 · 自动重试中' : '摄像头启动中…') }}
+        </span>
       </div>
     </div>
 
@@ -47,8 +38,8 @@
         <div class="scan-frame"></div>
         <div v-if="!cameraReady" class="video-placeholder">
           <el-icon :size="46"><Camera /></el-icon>
-          <div>{{ cameraError || '摄像头未启动' }}</div>
-          <div class="hint">点击右上角「启动实时识别」</div>
+          <div>{{ cameraError || '正在开启摄像头…' }}</div>
+          <div class="hint">终端摄像头由系统自动开启并保持常开，无需人工启停</div>
         </div>
 
         <transition name="fade">
@@ -102,7 +93,7 @@
         </div>
 
         <div class="tip">
-          终端可直接部署在手机、平板、电脑或嵌入式门禁一体机上；同一局域网内打开本页即可刷脸开门。
+          终端摄像头常开，无需人工启停；支持同一画面多人同时识别，通过者逐一开门并写入门禁记录。
         </div>
       </div>
     </div>
@@ -116,7 +107,6 @@ import api from '@/api'
 
 const cameras = ref([])
 const cameraCode = ref('')
-const running = ref(false)
 const cameraReady = ref(false)
 const cameraError = ref('')
 const overlay = ref(null)
@@ -126,9 +116,11 @@ const stats = ref({ total: 0, success: 0, ms: 0 })
 const videoRef = ref(null)
 let stream = null
 let timer = null
+let retryTimer = null
 let inFlight = false
 let overlayTimer = null
 let audioCtx = null
+let destroyed = false
 
 const currentCamera = computed(() => cameras.value.find(c => c.camera_code === cameraCode.value))
 
@@ -150,29 +142,44 @@ function onCameraChange(code) {
   localStorage.setItem('terminal_camera', code)
 }
 
-async function start() {
-  if (!cameraCode.value) return ElMessage.warning('请先选择门禁设备')
+// 摄像头由终端自动开启并保持常开，页面上不提供启停入口
+async function startCamera() {
+  if (destroyed || stream) return
   cameraError.value = ''
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
       audio: false
     })
+    const track = stream.getVideoTracks()[0]
+    if (track) track.onended = () => { onCameraLost('摄像头被断开，正在自动重连…') }
     videoRef.value.srcObject = stream
     await videoRef.value.play()
     cameraReady.value = true
-    running.value = true
-    timer = setInterval(recognizeOnce, 1800)
-    ElMessage.success('实时识别已启动，请正对摄像头')
+    if (!timer) timer = setInterval(recognizeOnce, 1800)
   } catch (e) {
     cameraError.value = insecureContext
       ? '当前地址不是 HTTPS，浏览器禁止调用摄像头，请使用 HTTPS 地址访问'
       : `摄像头启动失败：${e.name === 'NotAllowedError' ? '未授权摄像头权限' : e.message}`
+    releaseCamera()
+    scheduleRetry()
   }
 }
 
-function stop() {
-  running.value = false
+function onCameraLost(msg) {
+  cameraError.value = msg
+  cameraReady.value = false
+  releaseCamera()
+  scheduleRetry()
+}
+
+function scheduleRetry() {
+  if (destroyed) return
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = setTimeout(() => { if (!destroyed && !stream) startCamera() }, 4000)
+}
+
+function releaseCamera() {
   cameraReady.value = false
   if (timer) { clearInterval(timer); timer = null }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null }
@@ -180,7 +187,7 @@ function stop() {
 }
 
 async function recognizeOnce() {
-  if (inFlight || !cameraReady.value) return
+  if (inFlight || !cameraReady.value || !cameraCode.value) return
   inFlight = true
   const started = performance.now()
   try {
@@ -190,25 +197,47 @@ async function recognizeOnce() {
     fd.append('file', blob, 'frame.jpg')
     fd.append('camera_code', cameraCode.value)
     const res = await api.post('/face/terminal-verify', fd)
-    const similarity = Number(res.similarity || 0).toFixed(4)
     stats.value.total += 1
     stats.value.ms = res.recognition_ms ?? Math.round(performance.now() - started)
 
-    if (res.success) {
-      stats.value.success += 1
-      showOverlay('success', `开门成功：${res.student?.name || ''}`, `相似度 ${similarity} · ${res.direction === 'IN' ? '进入' : '离开'}宿舍${res.cooldown ? ' · 刚刚已识别' : ''}`)
+    // 画面中可能有多人，后端返回 matches 数组；命中者逐一开门
+    const list = res.matches && res.matches.length
+      ? res.matches
+      : (res.student ? [{ student: res.student, similarity: res.similarity, direction: res.direction, cooldown: res.cooldown }] : [])
+    const fresh = list.filter(m => !m.cooldown)
+    const peopleTag = res.face_count > 1 ? ` · 画面 ${res.face_count} 人` : ''
+
+    if (res.success && fresh.length) {
+      stats.value.success += fresh.length
+      const names = fresh.map(m => m.student?.name).filter(Boolean).join('、')
+      const detail = fresh.map(m => `${m.student?.name || ''} ${Number(m.similarity || 0).toFixed(4)}`).join(' · ')
+      showOverlay(
+        'success',
+        `开门成功：${names}`,
+        `${detail} · ${fresh[0].direction === 'IN' ? '进入' : '离开'}宿舍${peopleTag}`
+      )
       beep(true)
-      pushRecord({
-        name: res.student?.name || '',
-        studentNo: res.student?.student_no || '',
-        similarity,
-        direction: res.direction,
-        duplicate: Boolean(res.duplicate)
-      })
-    } else if (!res.cooldown) {
-      showOverlay('fail', '识别失败', `相似度 ${similarity} 低于阈值 ${res.threshold ?? 0.6}`)
+      fresh.forEach(m => pushRecord({
+        name: m.student?.name || '',
+        studentNo: m.student?.student_no || '',
+        similarity: Number(m.similarity || 0).toFixed(4),
+        direction: m.direction,
+        duplicate: Boolean(m.duplicate)
+      }))
+    } else if (!res.success && !res.cooldown) {
+      showOverlay(
+        'fail',
+        res.reason === 'NO_FACE_DETECTED' ? '未检测到人脸' : '识别失败',
+        res.detail || `相似度 ${Number(res.similarity || 0).toFixed(4)} 低于阈值 ${res.threshold ?? 0.6}`
+      )
       beep(false)
-      pushRecord({ name: '未知人员', studentNo: '-', similarity, direction: currentCamera.value?.direction || 'IN', duplicate: false })
+      pushRecord({
+        name: '未知人员',
+        studentNo: '-',
+        similarity: Number(res.similarity || 0).toFixed(4),
+        direction: currentCamera.value?.direction || 'IN',
+        duplicate: false
+      })
     }
   } catch (e) {
     // 网络或后端异常时静默跳过本次
@@ -266,9 +295,19 @@ function beep(ok) {
 
 const insecureContext = !window.isSecureContext
 
-onMounted(loadCameras)
+onMounted(async () => {
+  try {
+    await loadCameras()
+  } catch (e) {
+    // 设备列表失败时仍尝试开启摄像头
+  }
+  startCamera()
+})
+
 onUnmounted(() => {
-  stop()
+  destroyed = true
+  if (retryTimer) clearTimeout(retryTimer)
+  releaseCamera()
   if (overlayTimer) clearTimeout(overlayTimer)
 })
 </script>
@@ -300,6 +339,17 @@ onUnmounted(() => {
 .subtitle { font-size: 12px; color: #7e96b1; margin-top: 4px; }
 .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .opt-tag { float: right; color: #9aa; font-size: 12px; }
+.live-pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border-radius: 999px; font-size: 12.5px;
+  background: rgba(255, 255, 255, .05); border: 1px solid rgba(255, 255, 255, .12);
+  color: #9fb4c9; white-space: nowrap;
+}
+.live-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: #ffb454; }
+.live-pill.ok { color: #3ddc84; border-color: rgba(61, 220, 132, .35); }
+.live-pill.ok .dot { background: #3ddc84; box-shadow: 0 0 8px rgba(61, 220, 132, .8); }
+.live-pill.err { color: #ff6b6b; border-color: rgba(255, 107, 107, .35); }
+.live-pill.err .dot { background: #ff6b6b; }
 .stage { flex: 1; display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, .9fr); gap: 16px; }
 .video-wrap {
   position: relative; border-radius: 20px; overflow: hidden;

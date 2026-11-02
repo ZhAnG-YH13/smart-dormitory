@@ -10,11 +10,12 @@ from .. import config
 
 import sys
 sys.path.insert(0, str(config.BASE_DIR))
-from ai.face_engine import register_face, verify_face, embedding_to_json, json_to_embedding, get_system_info
+from ai.face_engine import register_face, verify_face, encode_frame, embedding_to_json, json_to_embedding, get_system_info
 
 import os
 import uuid
 import time
+import numpy as np
 
 router = APIRouter(prefix="/api/face", tags=["人脸管理"])
 
@@ -174,100 +175,142 @@ async def face_verify(
 
 def _match_and_record(db: Session, content: bytes, camera: Optional[CameraDevice] = None,
                       cooldown_seconds: int = 0) -> dict:
-    """与所有已注册人脸比对, 成功/失败均写门禁记录, 返回识别结果"""
+    """识别画面中的所有人脸, 逐张与已注册特征比对; 命中者全部放行, 全未命中才记失败"""
     profiles = db.query(FaceProfile).filter(FaceProfile.face_status == "registered").all()
 
-    best_match = None
-    best_similarity = 0.0
     started = time.perf_counter()
-
-    for fp in profiles:
-        try:
-            registered_emb = json_to_embedding(fp.face_embedding)
-            result = verify_face(content, registered_emb, source="bytes")
-            similarity = float(getattr(result, "similarity", 0.0) or 0.0)
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = fp
-        except Exception:
-            continue
-
+    embeddings, face_count = encode_frame(content, source="bytes")
     recognition_ms = round((time.perf_counter() - started) * 1000, 2)
     now = datetime.now()
 
-    if best_match and best_similarity >= config.FACE_SIMILARITY_THRESHOLD:
-        student = db.query(Student).filter(Student.id == best_match.student_id).first()
+    registered = []
+    for fp in profiles:
+        try:
+            registered.append((fp, json_to_embedding(fp.face_embedding)))
+        except Exception:
+            continue
 
-        # 实时模式冷却: 同一学生短时间内重复识别不重复写记录/异常
-        if cooldown_seconds > 0 and camera:
-            recent = db.query(AccessRecord).filter(
-                AccessRecord.student_id == student.id,
-                AccessRecord.camera_id == camera.id,
-                AccessRecord.verify_result == "success",
-                AccessRecord.occurred_at >= now - timedelta(seconds=cooldown_seconds),
-            ).first()
-            if recent:
-                return {
-                    "success": True,
-                    "similarity": round(best_similarity, 4),
-                    "student": {"id": student.id, "student_no": student.student_no, "name": student.name},
-                    "direction": camera.direction,
-                    "access_record_id": recent.id,
-                    "presence": camera.direction == "IN",
-                    "recognition_ms": recognition_ms,
-                    "duplicate": True,
-                    "cooldown": True,
-                }
+    # 每张人脸分别与全部已注册特征比对, 取该人脸相似度最高的学生
+    hits: dict = {}
+    best_match = None
+    best_similarity = 0.0
+    for emb in embeddings:
+        face_sim, face_match = 0.0, None
+        for fp, ref in registered:
+            try:
+                sim = max(0.0, 1.0 - float(np.linalg.norm(emb - ref)))
+            except Exception:
+                continue
+            if sim > face_sim:
+                face_sim, face_match = sim, fp
+        if face_sim > best_similarity:
+            best_similarity, best_match = face_sim, face_match
+        if face_match is None or face_sim < config.FACE_SIMILARITY_THRESHOLD:
+            continue
+        prev = hits.get(face_match.student_id)
+        if not prev or face_sim > prev[0]:
+            hits[face_match.student_id] = (face_sim, face_match)
 
-        from ..services.access_service import check_duplicate_access
-        duplicate = check_duplicate_access(db, student, camera)
-
-        best_match.verify_count += 1
-        best_match.verify_success_count += 1
-        best_match.last_verify_time = now
-
+    # 命中分支: 画面中每个通过阈值的人都单独开门、单独写记录
+    if hits:
         camera_dir = camera.direction if camera else "IN"
         building = camera.building if camera else None
-        record = AccessRecord(
-            student_id=student.id,
-            student_no=student.student_no,
-            student_name=student.name,
-            camera_id=camera.id if camera else None,
-            camera_code=camera.camera_code if camera else None,
-            building_id=building.id if building else None,
-            building_name=building.name if building else "",
-            direction=camera_dir,
-            similarity=best_similarity,
-            recognition_ms=recognition_ms,
-            verify_result="success",
-            recognition_mode="realtime",
-            occurred_at=now,
-        )
-        db.add(record)
-        db.flush()
+        matches = []
+        for student_id, (similarity, profile) in sorted(hits.items(), key=lambda kv: kv[1][0], reverse=True):
+            student = db.query(Student).filter(Student.id == student_id).first()
+            if not student:
+                continue
 
-        ps = db.query(PresenceStatus).filter(PresenceStatus.student_id == student.id).first()
-        if not ps:
-            ps = PresenceStatus(student_id=student.id)
-            db.add(ps); db.flush()
-        ps.is_present = (camera_dir == "IN")
-        ps.last_direction = camera_dir
-        ps.last_access_time = now
-        ps.last_access_record_id = record.id
-        db.commit()
+            # 实时模式冷却: 同一学生短时间内重复识别不重复写记录/异常
+            recent = None
+            if cooldown_seconds > 0 and camera:
+                recent = db.query(AccessRecord).filter(
+                    AccessRecord.student_id == student.id,
+                    AccessRecord.camera_id == camera.id,
+                    AccessRecord.verify_result == "success",
+                    AccessRecord.occurred_at >= now - timedelta(seconds=cooldown_seconds),
+                ).first()
+            if recent:
+                matches.append({
+                    "similarity": round(float(similarity), 4),
+                    "student": {"id": student.id, "student_no": student.student_no, "name": student.name},
+                    "direction": camera_dir,
+                    "access_record_id": recent.id,
+                    "presence": camera_dir == "IN",
+                    "duplicate": True,
+                    "cooldown": True,
+                })
+                continue
 
-        return {
-            "success": True,
-            "similarity": round(best_similarity, 4),
-            "student": {"id": student.id, "student_no": student.student_no, "name": student.name},
-            "direction": camera_dir,
-            "access_record_id": record.id,
-            "presence": ps.is_present,
-            "recognition_ms": recognition_ms,
-            "duplicate": bool(duplicate),
-        }
+            from ..services.access_service import check_duplicate_access
+            duplicate = check_duplicate_access(db, student, camera)
 
-    # 失败分支
+            profile.verify_count += 1
+            profile.verify_success_count += 1
+            profile.last_verify_time = now
+
+            record = AccessRecord(
+                student_id=student.id,
+                student_no=student.student_no,
+                student_name=student.name,
+                camera_id=camera.id if camera else None,
+                camera_code=camera.camera_code if camera else None,
+                building_id=building.id if building else None,
+                building_name=building.name if building else "",
+                direction=camera_dir,
+                similarity=float(similarity),
+                recognition_ms=recognition_ms,
+                verify_result="success",
+                recognition_mode="realtime",
+                occurred_at=now,
+            )
+            db.add(record)
+            db.flush()
+
+            ps = db.query(PresenceStatus).filter(PresenceStatus.student_id == student.id).first()
+            if not ps:
+                ps = PresenceStatus(student_id=student.id)
+                db.add(ps); db.flush()
+            ps.is_present = (camera_dir == "IN")
+            ps.last_direction = camera_dir
+            ps.last_access_time = now
+            ps.last_access_record_id = record.id
+
+            matches.append({
+                "similarity": round(float(similarity), 4),
+                "student": {"id": student.id, "student_no": student.student_no, "name": student.name},
+                "direction": camera_dir,
+                "access_record_id": record.id,
+                "presence": ps.is_present,
+                "duplicate": bool(duplicate),
+                "cooldown": False,
+            })
+
+        if matches:
+            db.commit()
+            top = matches[0]
+            return {
+                "success": True,
+                "count": len(matches),
+                "face_count": face_count,
+                "matches": matches,
+                "student": top["student"],
+                "similarity": top["similarity"],
+                "direction": top["direction"],
+                "access_record_id": top["access_record_id"],
+                "presence": top["presence"],
+                "recognition_ms": recognition_ms,
+                "duplicate": top["duplicate"],
+            }
+
+    # 失败分支: 画面中没有任何人通过阈值
+    if face_count == 0:
+        reason, detail = "NO_FACE_DETECTED", "画面中未检测到人脸"
+    elif best_match:
+        reason, detail = "FACE_MISMATCH", "未匹配到可信的已注册人脸"
+    else:
+        reason, detail = "NO_MATCH_FOUND", "系统中尚未注册可比对的人脸"
+
     matched_student = None
     if best_match:
         matched_student = db.query(Student).filter(Student.id == best_match.student_id).first()
@@ -285,8 +328,9 @@ def _match_and_record(db: Session, content: bytes, camera: Optional[CameraDevice
                     "success": False,
                     "similarity": round(float(best_similarity), 4),
                     "threshold": config.FACE_SIMILARITY_THRESHOLD,
-                    "reason": "FACE_MISMATCH" if best_match else "NO_MATCH_FOUND",
-                    "detail": "未匹配到可信的已注册人脸",
+                    "reason": reason,
+                    "detail": detail,
+                    "face_count": face_count,
                     "cooldown": True,
                 }
 
@@ -310,8 +354,8 @@ def _match_and_record(db: Session, content: bytes, camera: Optional[CameraDevice
         ab = AbnormalEvent(
             event_no=f"AB{now.strftime('%Y%m%d%H%M%S%f')[:18]}",
             event_type="ai_recognition",
-            event_reason="FACE_MISMATCH",
-            event_detail=f"相似度 {float(best_similarity):.4f} < 阈值 {config.FACE_SIMILARITY_THRESHOLD}",
+            event_reason=reason,
+            event_detail=f"{detail}（画面人脸 {face_count} 张，最高相似度 {float(best_similarity):.4f} < 阈值 {config.FACE_SIMILARITY_THRESHOLD}）",
             camera_id=camera.id,
             camera_code=camera.camera_code,
             student_id=matched_student.id if matched_student else None,
@@ -330,8 +374,10 @@ def _match_and_record(db: Session, content: bytes, camera: Optional[CameraDevice
         "success": False,
         "similarity": round(float(best_similarity), 4),
         "threshold": config.FACE_SIMILARITY_THRESHOLD,
-        "reason": "FACE_MISMATCH" if best_match else "NO_MATCH_FOUND",
-        "detail": "未匹配到可信的已注册人脸",
+        "reason": reason,
+        "detail": detail,
+        "face_count": face_count,
+        "recognition_ms": recognition_ms,
     }
 
 
